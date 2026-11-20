@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# Dados: a pasta data/ inteira fica fora do Git
+# (inclui o CSV original data/123_fishing_trajs.csv e todos os derivados:
+#  Parquet, divisões, normalizações, previsões e tabelas de resultados).
+# Os derivados são sempre regeneráveis a partir do CSV original.
+# ---------------------------------------------------------------------------
+data/
+
+# ---------------------------------------------------------------------------
+# Ambientes virtuais
+# ---------------------------------------------------------------------------
+IACH-AIS-venv-3/
+venv/
+.venv/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Modelos treinados e outros artefactos binários de treino
+# ---------------------------------------------------------------------------
+modelos/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.joblib
+*.pickle
+
+# ---------------------------------------------------------------------------
+# LaTeX: apenas ficheiros temporários de compilação.
+# Os .tex, .bib e os PDF entregues continuam versionados, assim como a pasta
+# FormattingGuidelines-IJCAI-ECAI-26/ com as guidelines obrigatórias.
+# ---------------------------------------------------------------------------
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# ---------------------------------------------------------------------------
+# Sistema e editor
+# ---------------------------------------------------------------------------
+.DS_Store
+.vscode/
