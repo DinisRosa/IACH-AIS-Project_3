@@ -59,7 +59,9 @@ Python 3.14.4 (a instalada), PyTorch 2.15.0 em **CPU** (sem GPU). Executar a par
 python3 -m venv IACH-AIS-venv-3 && source IACH-AIS-venv-3/bin/activate
 pip install -r requirements.txt
 python src/preparar_parquet.py     # CSV -> Parquet
-python src/dividir.py              # treino/validação/teste
+python src/dividir.py              # treino/validação/teste (principal e agrupada por navio)
+python src/features.py             # features e normalização (uma variante de configs/)
+python src/features.py configs/EXP-002_features_sem_xy.json   # outra variante
 ```
 
 **[A COMPLETAR]** comandos de treino e avaliação quando os scripts existirem.

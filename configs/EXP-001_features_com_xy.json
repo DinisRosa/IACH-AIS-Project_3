@@ -1,0 +1,5 @@
+{
+  "nome": "EXP-001_features_com_xy",
+  "descricao": "Variante de referência do passo 4: features do plano, incluindo as coordenadas projetadas x e y. O t_rel fica de fora.",
+  "features": ["x", "y", "signed_turn", "time_gap", "euc_speed", "distanceToShore"]
+}

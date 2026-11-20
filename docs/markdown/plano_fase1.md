@@ -57,14 +57,21 @@ Distribuição do nº de pontos por trajetória (mín., mediana, máx.) e da dur
 - 70/15/15, semente 42 → **86 / 19 / 18** trajetórias (treino / validação / teste). A proposta indicava exatamente 86/19/18 e foi confirmada: a divisão reproduz os seus conjuntos ao ponto, com 706 522 / 173 532 / 146 225 pontos e 75,6 % / 77,1 % / 73,5 % de pesca. Não é preciso corrigir o texto da proposta.
 - Esquema que reproduz a proposta (único entre os testados): `numpy.random.default_rng(42).permutation` sobre os ids ordenados por `(id_navio, n_traj)`, com cortes `[:86]` treino, `[86:104]` teste e `[104:]` validação. `random.shuffle`, `numpy.random.shuffle` e `rng.choice` davam outros conjuntos (por exemplo, validação com 83,1 % de pesca).
 - Verificado: nenhum id em dois conjuntos, os 123 ids cobertos, cada conjunto inteiro (nenhuma trajetória partida) e a soma dos pontos igual a 1 026 279. O `dividir.py` falha se a divisão deixar de reproduzir os números da proposta.
-- **Fuga entre navios:** 65 / 17 / 18 navios nos três conjuntos, mas só 84 distintos — **16 navios aparecem em mais de um conjunto** (9 em treino e teste ao mesmo tempo). A divisão é por id completo, como decidido; isto fica registado como limitação e justifica o teste de sensibilidade agrupado por navio (por fazer).
+- **Fuga entre navios:** 65 / 17 / 18 navios nos três conjuntos, mas só 84 distintos — **16 navios aparecem em mais de um conjunto** (9 em treino e teste ao mesmo tempo). A divisão é por id completo, como decidido; isto fica registado como limitação e é medido pelo teste de sensibilidade agrupado por navio.
+- **Divisão de sensibilidade, agrupada por navio** (`data/dividir/conjuntos_por_navio.json`): mesma semente e mesma regra de cortes, mas a unidade sorteada é o navio. Resultado: 59 / 12 / 13 navios e **80 / 21 / 22 trajetórias** (treino / validação / teste), com 776 216 / 114 749 / 135 314 pontos e 74,9 % / 80,0 % / 75,8 % de pesca. Verificado: nenhum navio em dois conjuntos, os 84 navios cobertos, as 123 trajetórias cobertas e a soma dos pontos igual a 1 026 279. A divisão principal não muda; esta serve só para medir a diferença.
 - Com só 18 trajetórias no teste, os resultados são ruidosos: prever validação cruzada por trajetória no fim.
 
 ### Passo 4 — Normalização e features (`features.py`)
 
-- Mediana/IQR por coluna, ajustados só ao treino, guardados em JSON e aplicados aos três conjuntos.
-- `time_gap` mantém-se como feature. O `t_rel` fica de fora das features por defeito (risco de o modelo aprender "início da viagem = navegação"); pode testar-se depois como ablação. **[A CONFIRMAR]**
-- Duas versões das features: **com** `x, y` e **sem** `x, y` (evita decorar zonas geográficas).
+**Estado: concluído** (`src/features.py`, `configs/EXP-00{1,2,3}_*.json`, `data/features/`).
+
+- A lista de features vem de um ficheiro em `configs/`, um por experiência; trocar de variante é passar outro ficheiro ao script, sem alterar código. Três variantes: **EXP-001** com `x, y` (referência: `x, y, signed_turn, time_gap, euc_speed, distanceToShore`), **EXP-002** sem `x, y` (`signed_turn, time_gap, euc_speed, distanceToShore`) e **EXP-003** com `t_rel` (as seis de EXP-001 mais `t_rel`).
+- `time_gap` é feature. O `t_rel` fica fora por defeito (risco de o modelo aprender "início da viagem = navegação") e entra apenas na EXP-003, como ablação. **Decidido.**
+- Normalização mediana/IQR por coluna, ajustada **só ao treino**, guardada em `data/features/<experiência>/normalizacao.json` e aplicada aos três conjuntos. As features ficam em `float32`; o `t_rel`, quando não é feature, fica como coluna auxiliar.
+- Valores ajustados no treino (EXP-001), mediana / IQR: `x` 544 820,7 / 200 743,3; `y` 6 337 198,8 / 163 109,5; `signed_turn` 0,0 / 5,327; `time_gap` 10 s / 6 s; `euc_speed` 2,7223 / 2,3814; `distanceToShore` 20 505,2 / 31 691,8. Na EXP-003, `t_rel` 44 263 s / 95 195 s.
+- **Outliers preservados**: não há corte, só translação e escala. Efeito das caudas no treino, em unidades de IQR já normalizadas: `time_gap` p99 = 5,17 e máximo = 7 860 (máximo bruto de 47 172 s ≈ 13,1 h, o maior gap do treino); `euc_speed` p99 = 2,97 e máximo = 19,2 (bruto 48,5). Como a mediana de `time_gap` é 10 s e o IQR 6 s, qualquer gap grande aparece com dezenas ou milhares de IQR: essa cauda é medida, não escondida.
+- Testes no próprio script: no treino normalizado a mediana é exatamente 0 e |IQR − 1| ≤ 3 × 10⁻⁸ em cada coluna (tolerância 1e-4); mínimo e máximo normalizados coincidem com os do bruto transformado (prova de que nada foi cortado); e a prova de ausência de fuga entre conjuntos — perturbar validação e teste (×1000 + 1e6) não altera as estatísticas guardadas. O teste foi verificado ao contrário: ajustar as estatísticas a todos os dados faz a asserção falhar.
+- Percentis de `time_gap` e `euc_speed` antes e depois, por conjunto, em `data/features/<experiência>/distribuicoes.csv`. Os três conjuntos ficam em `treino.parquet`, `validacao.parquet` e `teste.parquet` (4,8 + 19 + 5,6 MB na EXP-001).
 
 ### Passo 5 — Dataset (`dataset.py`)
 
@@ -143,3 +150,7 @@ Janelamento, sobreposição, corte em gaps, pós-processamento temporal, ablaç�
 | D8 | IoU acrescentado à avaliação, por ponto e por segmento | cumpre o prometido na proposta |
 | D9 | Parquet com 14 colunas: 11 do plano + `longitude`, `latitude` e `label_original` | permite mapas e auditoria na fase 2 |
 | D10 | `requirements.txt` começa com `numpy`, `pandas` e `pyarrow`; o resto entra quando for preciso | ambiente mínimo e reprodutível |
+| D11 | Divisão principal por id completo: **86 / 19 / 18 = treino / validação / teste** | confere com o texto da proposta |
+| D12 | Divisão agrupada por navio entra já na fase 1, só como teste de sensibilidade | 59 / 12 / 13 navios → 80 / 21 / 22 trajetórias; a divisão principal não muda |
+| D13 | `time_gap` é feature; `t_rel` fica de fora por defeito e só entra na ablação EXP-003 | variantes escolhidas em `configs/`, sem alterar código |
+| D14 | PDFs de terceiros em `docs/bibliografia/` ficam fora do Git | `.gitignore` e nota no `AGENTS.md`; versão local mantém-se |

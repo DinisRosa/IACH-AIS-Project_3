@@ -1,0 +1,5 @@
+{
+  "nome": "EXP-003_features_com_t_rel",
+  "descricao": "Ablação da variante de referência com o tempo relativo desde o início da trajetória (t_rel), para medir se o modelo aprende atalhos temporais.",
+  "features": ["x", "y", "signed_turn", "time_gap", "euc_speed", "distanceToShore", "t_rel"]
+}

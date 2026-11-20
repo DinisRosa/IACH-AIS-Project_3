@@ -1,0 +1,5 @@
+{
+  "nome": "EXP-002_features_sem_xy",
+  "descricao": "Variante sem as coordenadas projetadas x e y: evita que o modelo decore zonas geográficas em vez de aprender comportamento.",
+  "features": ["signed_turn", "time_gap", "euc_speed", "distanceToShore"]
+}
