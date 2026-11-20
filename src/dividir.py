@@ -12,6 +12,12 @@ conjuntos.
 O resultado é escrito em ``data/dividir/conjuntos.json`` (a lista de ids de cada conjunto), que
 os scripts seguintes leem em vez de repetirem o sorteio.
 
+Além da divisão principal, o script produz uma divisão de **sensibilidade agrupada por navio**
+(``data/dividir/conjuntos_por_navio.json``): o mesmo sorteio e a mesma semente, mas a unidade
+sorteada é o navio, para que todas as trajetórias do mesmo navio fiquem no mesmo conjunto. Serve
+para medir quanto dos resultados pode vir de o modelo reconhecer navios e não comportamentos; a
+divisão principal continua a ser a da proposta e não é alterada.
+
 Executar a partir da raiz do repositório:
 
     python src/dividir.py
@@ -28,6 +34,7 @@ import pandas as pd
 RAIZ = Path(__file__).resolve().parents[1]
 CAMINHO_PARQUET = RAIZ / "data" / "ais_123.parquet"
 CAMINHO_SAIDA = RAIZ / "data" / "dividir" / "conjuntos.json"
+CAMINHO_SAIDA_NAVIO = RAIZ / "data" / "dividir" / "conjuntos_por_navio.json"
 
 SEMENTE = 42
 N_TRAJETORIAS_ESPERADAS = 123
@@ -38,6 +45,10 @@ N_PONTOS_ESPERADOS = 1_026_279
 N_TREINO = 86
 N_TESTE = 18
 N_VALIDACAO = 19
+# A mesma proporção 70/15/15 aplicada aos 84 navios (arredondada, soma 84).
+N_NAVIOS_TREINO = 59
+N_NAVIOS_TESTE = 13
+N_NAVIOS_VALIDACAO = 12
 NOMES_CONJUNTOS = ("treino", "validacao", "teste")
 
 # Números da proposta entregue (docs/latex/proposta_pt.tex), usados como verificação de
@@ -73,17 +84,45 @@ def dividir_ids(
         f"trajetórias: {len(ids)} != {N_TRAJETORIAS_ESPERADAS}"
     )
     ordem = [ids[i] for i in np.random.default_rng(semente).permutation(len(ids))]
+    return _cortar(ordem, N_TREINO, N_TESTE)
+
+
+def dividir_navios(
+    ids: list[tuple[int, int]], semente: int = SEMENTE
+) -> dict[str, list[tuple[int, int]]]:
+    """Sorteia os navios e põe todas as trajetórias de cada navio no mesmo conjunto."""
+    navios = sorted({id_navio for id_navio, _ in ids})
+    assert len(navios) == N_NAVIOS_ESPERADOS, (
+        f"navios: {len(navios)} != {N_NAVIOS_ESPERADOS}"
+    )
+    ordem_navios = [navios[i] for i in np.random.default_rng(semente).permutation(len(navios))]
+    navios_por_conjunto = _cortar(ordem_navios, N_NAVIOS_TREINO, N_NAVIOS_TESTE)
+    conjuntos: dict[str, list[tuple[int, int]]] = {nome: [] for nome in NOMES_CONJUNTOS}
+    for nome, lista in navios_por_conjunto.items():
+        conjunto = set(lista)
+        conjuntos[nome] = [id_completo for id_completo in ids if id_completo[0] in conjunto]
+    return conjuntos
+
+
+def _cortar(
+    ordem: list, n_treino: int, n_teste: int
+) -> dict[str, list]:
+    """Reparte uma ordem sorteada em treino, teste e validação, sempre pela mesma regra."""
+    assert n_treino + n_teste < len(ordem), "os cortes não deixam nada para validação"
     return {
-        "treino": ordem[:N_TREINO],
-        "teste": ordem[N_TREINO : N_TREINO + N_TESTE],
-        "validacao": ordem[N_TREINO + N_TESTE :],
+        "treino": ordem[:n_treino],
+        "teste": ordem[n_treino : n_treino + n_teste],
+        "validacao": ordem[n_treino + n_teste :],
     }
 
 
 def validar_divisao(
-    conjuntos: dict[str, list[tuple[int, int]]], df: pd.DataFrame
+    conjuntos: dict[str, list[tuple[int, int]]],
+    df: pd.DataFrame,
+    esperados: dict[str, int] | None = None,
 ) -> dict[str, dict[str, float]]:
     """Confirma que a divisão é uma partição dos ids e devolve o resumo por conjunto."""
+    esperados = esperados or {}
     todos: set[tuple[int, int]] = set()
     for nome, conjunto in conjuntos.items():
         assert len(conjunto) == len(set(conjunto)), f"ids repetidos em {nome}"
@@ -93,11 +132,10 @@ def validar_divisao(
     assert len(todos) == N_TRAJETORIAS_ESPERADAS, (
         f"a divisão cobre {len(todos)} trajetórias, esperadas {N_TRAJETORIAS_ESPERADAS}"
     )
-    assert len(conjuntos["treino"]) == N_TREINO, f"treino: {len(conjuntos['treino'])} != {N_TREINO}"
-    assert len(conjuntos["teste"]) == N_TESTE, f"teste: {len(conjuntos['teste'])} != {N_TESTE}"
-    assert len(conjuntos["validacao"]) == N_VALIDACAO, (
-        f"validação: {len(conjuntos['validacao'])} != {N_VALIDACAO}"
-    )
+    for nome, esperado in esperados.items():
+        assert len(conjuntos[nome]) == esperado, (
+            f"{nome}: {len(conjuntos[nome])} trajetórias != {esperado}"
+        )
 
     # Resumo por conjunto, calculado sobre o Parquet e não sobre os ids.
     resumo: dict[str, dict[str, float]] = {}
@@ -149,11 +187,14 @@ def comparar_com_proposta(resumo: dict[str, dict[str, float]]) -> None:
 
 
 def escrever_conjuntos(
-    conjuntos: dict[str, list[tuple[int, int]]], caminho: Path = CAMINHO_SAIDA
+    conjuntos: dict[str, list[tuple[int, int]]],
+    caminho: Path = CAMINHO_SAIDA,
+    agrupamento: str = "id_completo",
 ) -> None:
     """Guarda os ids de cada conjunto em JSON, para os scripts seguintes os reutilizarem."""
     conteudo = {
         "semente": SEMENTE,
+        "agrupamento": agrupamento,
         "proporcoes": {"treino": 0.7, "validacao": 0.15, "teste": 0.15},
         "n_trajetorias": {nome: len(conjuntos[nome]) for nome in NOMES_CONJUNTOS},
         "ids": {
@@ -163,6 +204,29 @@ def escrever_conjuntos(
     }
     caminho.parent.mkdir(parents=True, exist_ok=True)
     caminho.write_text(json.dumps(conteudo, indent=2) + "\n", encoding="utf-8")
+
+
+def verificar_navios_separados(conjuntos: dict[str, list[tuple[int, int]]]) -> None:
+    """Confirma que cada navio aparece num único conjunto e que os 84 navios estão repartidos."""
+    esperados = {
+        "treino": N_NAVIOS_TREINO,
+        "validacao": N_NAVIOS_VALIDACAO,
+        "teste": N_NAVIOS_TESTE,
+    }
+    vistos: dict[int, str] = {}
+    for nome, conjunto in conjuntos.items():
+        navios = {id_navio for id_navio, _ in conjunto}
+        assert len(navios) == esperados[nome], (
+            f"{nome}: {len(navios)} navios != {esperados[nome]}"
+        )
+        for id_navio in navios:
+            anterior = vistos.setdefault(id_navio, nome)
+            assert anterior == nome, (
+                f"o navio {id_navio} aparece em {anterior} e em {nome}"
+            )
+    assert len(vistos) == N_NAVIOS_ESPERADOS, (
+        f"a divisão agrupada cobre {len(vistos)} navios, esperados {N_NAVIOS_ESPERADOS}"
+    )
 
 
 def carregar_conjuntos(caminho: Path = CAMINHO_SAIDA) -> dict[str, set[tuple[int, int]]]:
@@ -182,24 +246,50 @@ def carregar_conjuntos(caminho: Path = CAMINHO_SAIDA) -> dict[str, set[tuple[int
     return conjuntos
 
 
-def dividir(
-    caminho_parquet: Path = CAMINHO_PARQUET, caminho_saida: Path = CAMINHO_SAIDA
-) -> dict[str, set[tuple[int, int]]]:
-    """Executa o passo 3 completo: sorteio, validação, escrita do JSON e resumo."""
-    df = pd.read_parquet(caminho_parquet, columns=["id_navio", "n_traj", "label"])
-    ids = ler_ids(caminho_parquet)
-    conjuntos = dividir_ids(ids, SEMENTE)
-    resumo = validar_divisao(conjuntos, df)
-    escrever_conjuntos(conjuntos, caminho_saida)
-
-    print(f"Divisão escrita em {caminho_saida.relative_to(RAIZ)} (semente {SEMENTE})")
+def imprimir_resumo(resumo: dict[str, dict[str, float]], titulo: str) -> None:
+    """Imprime o resumo de uma divisão, uma linha por conjunto."""
+    print(titulo)
     for nome in NOMES_CONJUNTOS:
         r = resumo[nome]
         print(
             f"  {nome:10s} {r['trajetorias']:3d} trajetórias | {r['navios']:2d} navios | "
             f"{r['pontos']:7d} pontos | {r['percentagem_pesca']:.1f} % de pesca"
         )
+
+
+def dividir(
+    caminho_parquet: Path = CAMINHO_PARQUET,
+    caminho_saida: Path = CAMINHO_SAIDA,
+    caminho_saida_navio: Path = CAMINHO_SAIDA_NAVIO,
+) -> dict[str, set[tuple[int, int]]]:
+    """Executa o passo 3 completo: as duas divisões, validadas e escritas em JSON."""
+    df = pd.read_parquet(caminho_parquet, columns=["id_navio", "n_traj", "label"])
+    ids = ler_ids(caminho_parquet)
+
+    # Divisão principal: a unidade é o id completo (a da proposta).
+    conjuntos = dividir_ids(ids, SEMENTE)
+    resumo = validar_divisao(
+        conjuntos, df, {"treino": N_TREINO, "validacao": N_VALIDACAO, "teste": N_TESTE}
+    )
+    escrever_conjuntos(conjuntos, caminho_saida, agrupamento="id_completo")
+    imprimir_resumo(
+        resumo,
+        f"Divisão principal (por id completo) em {caminho_saida.relative_to(RAIZ)} "
+        f"(semente {SEMENTE})",
+    )
     comparar_com_proposta(resumo)
+
+    # Divisão de sensibilidade: a unidade é o navio, para não haver navio em dois conjuntos.
+    conjuntos_navio = dividir_navios(ids, SEMENTE)
+    resumo_navio = validar_divisao(conjuntos_navio, df)
+    verificar_navios_separados(conjuntos_navio)
+    escrever_conjuntos(conjuntos_navio, caminho_saida_navio, agrupamento="navio")
+    imprimir_resumo(
+        resumo_navio,
+        f"Divisão de sensibilidade (agrupada por navio) em "
+        f"{caminho_saida_navio.relative_to(RAIZ)} (semente {SEMENTE})",
+    )
+
     return carregar_conjuntos(caminho_saida)
 
 
