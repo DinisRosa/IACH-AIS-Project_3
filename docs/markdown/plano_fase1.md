@@ -52,10 +52,13 @@ Distribuição do nº de pontos por trajetória (mín., mediana, máx.) e da dur
 
 ### Passo 3 — Divisão por id completo (`dividir.py`)
 
-- 70/15/15, semente 42 → 86 / 18 / 19 trajetórias. A proposta indica 86/19/18, possivelmente noutra ordem de conjuntos: comparar quando o `dividir.py` correr e atualizar o texto da proposta.
-- Verificar a proporção de pesca em cada conjunto e que nenhum id aparece em dois conjuntos.
-- **Teste de sensibilidade:** o mesmo navio pode ter várias trajetórias. Mantém-se a divisão pelo id completo, mas compara-se com uma divisão agrupada por navio, para ver se os resultados mudam.
-- Com só 19 trajetórias no teste, os resultados são ruidosos: prever validação cruzada por trajetória no fim.
+**Estado: concluído** (`src/dividir.py`, `data/dividir/conjuntos.json`).
+
+- 70/15/15, semente 42 → **86 / 19 / 18** trajetórias (treino / validação / teste). A proposta indicava exatamente 86/19/18 e foi confirmada: a divisão reproduz os seus conjuntos ao ponto, com 706 522 / 173 532 / 146 225 pontos e 75,6 % / 77,1 % / 73,5 % de pesca. Não é preciso corrigir o texto da proposta.
+- Esquema que reproduz a proposta (único entre os testados): `numpy.random.default_rng(42).permutation` sobre os ids ordenados por `(id_navio, n_traj)`, com cortes `[:86]` treino, `[86:104]` teste e `[104:]` validação. `random.shuffle`, `numpy.random.shuffle` e `rng.choice` davam outros conjuntos (por exemplo, validação com 83,1 % de pesca).
+- Verificado: nenhum id em dois conjuntos, os 123 ids cobertos, cada conjunto inteiro (nenhuma trajetória partida) e a soma dos pontos igual a 1 026 279. O `dividir.py` falha se a divisão deixar de reproduzir os números da proposta.
+- **Fuga entre navios:** 65 / 17 / 18 navios nos três conjuntos, mas só 84 distintos — **16 navios aparecem em mais de um conjunto** (9 em treino e teste ao mesmo tempo). A divisão é por id completo, como decidido; isto fica registado como limitação e justifica o teste de sensibilidade agrupado por navio (por fazer).
+- Com só 18 trajetórias no teste, os resultados são ruidosos: prever validação cruzada por trajetória no fim.
 
 ### Passo 4 — Normalização e features (`features.py`)
 
