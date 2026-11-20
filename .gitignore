@@ -52,6 +52,13 @@ modelos/
 *.synctex.gz
 
 # ---------------------------------------------------------------------------
+# Bibliografia: PDFs de artigos de terceiros (≈180 MB) ficam só no disco.
+# São material de leitura, não conteúdo do projeto, e estão disponíveis nas
+# fontes originais. Se for preciso versioná-los, remover estas duas linhas.
+# ---------------------------------------------------------------------------
+docs/bibliografia/
+
+# ---------------------------------------------------------------------------
 # Sistema e editor
 # ---------------------------------------------------------------------------
 .DS_Store
