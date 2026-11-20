@@ -11,6 +11,11 @@ O que faz:
 - aplica essas estatísticas aos três conjuntos e escreve
   ``data/features/<experiência>/{treino,validacao,teste}.parquet`` com as features em
   ``float32`` já normalizadas. Os outliers não são cortados: só há translação e escala;
+- com ``--divisao por_navio`` faz o mesmo para a divisão agrupada por navio, ajustando outra vez a
+  normalização ao treino **dessa** divisão e escrevendo em
+  ``data/features/<experiência>__por_navio/``. Sem isto, o teste de sensibilidade usaria
+  estatísticas calculadas com pontos que nessa divisão estão no teste (fuga). A divisão principal
+  não é tocada;
 - verifica que, no treino normalizado, a mediana é 0 e o IQR é 1 em cada coluna, que os extremos
   são os do bruto transformado (nada cortado) e que perturbar validação e teste não altera as
   estatísticas guardadas — prova de que nenhuma delas foi calculada com esses conjuntos;
@@ -22,18 +27,20 @@ Executar a partir da raiz do repositório:
     python src/features.py                                          # EXP-001 (com x, y)
     python src/features.py configs/EXP-002_features_sem_xy.json     # sem x, y
     python src/features.py configs/EXP-003_features_com_t_rel.json  # ablação com t_rel
+    python src/features.py --divisao por_navio                      # EXP-001, divisão por navio
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from dividir import CAMINHO_SAIDA as CAMINHO_CONJUNTOS
+from dividir import CAMINHO_SAIDA_NAVIO
 from dividir import carregar_conjuntos
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -41,6 +48,9 @@ CAMINHO_PARQUET = RAIZ / "data" / "ais_123.parquet"
 PASTA_CONFIGS = RAIZ / "configs"
 PASTA_SAIDA = RAIZ / "data" / "features"
 CONFIG_POR_DEFEITO = PASTA_CONFIGS / "EXP-001_features_com_xy.json"
+
+# Divisões que se podem preparar: a de referência e a de sensibilidade agrupada por navio.
+CONJUNTOS_POR_DIVISAO = {"principal": CAMINHO_CONJUNTOS, "por_navio": CAMINHO_SAIDA_NAVIO}
 
 # Features que o Parquet tem e que podem entrar no modelo. O ``t_rel`` existe mas fica fora por
 # defeito: o modelo poderia aprender "início da viagem = navegação" em vez de comportamento.
@@ -232,11 +242,16 @@ def carregar_normalizacao(pasta: Path) -> tuple[list[str], dict[str, dict[str, f
 def preparar(
     caminho_config: Path | str = CONFIG_POR_DEFEITO,
     caminho_parquet: Path = CAMINHO_PARQUET,
-    caminho_conjuntos: Path = CAMINHO_CONJUNTOS,
+    caminho_conjuntos: Path | None = None,
     pasta_saida: Path = PASTA_SAIDA,
+    divisao: str = "principal",
 ) -> Path:
-    """Executa o passo 4 para uma configuração e devolve a pasta com os artefactos."""
+    """Executa o passo 4 para uma configuração e uma divisão e devolve a pasta dos artefactos."""
+    assert divisao in CONJUNTOS_POR_DIVISAO, f"divisão desconhecida: {divisao}"
     config = ler_config(Path(caminho_config))
+    if caminho_conjuntos is None:
+        caminho_conjuntos = CONJUNTOS_POR_DIVISAO[divisao]
+    nome_saida = config["nome"] if divisao == "principal" else f"{config['nome']}__{divisao}"
     features = config["features"]
     colunas = list(dict.fromkeys([*COLUNAS_AUXILIARES, *features]))
     df = pd.read_parquet(caminho_parquet, columns=colunas)
@@ -253,7 +268,7 @@ def preparar(
     verificar_normalizacao(brutos["treino"], normalizados["treino"], features, normalizacao)
     verificar_sem_fuga(df, conjuntos, normalizacao, features)
 
-    destino = pasta_saida / config["nome"]
+    destino = pasta_saida / nome_saida
     destino.mkdir(parents=True, exist_ok=True)
     for nome, parte in normalizados.items():
         caminho = destino / f"{nome}.parquet"
@@ -261,7 +276,9 @@ def preparar(
         verificar_parquet_normalizado(caminho, features)
 
     registo = {
-        "experiencia": config["nome"],
+        "experiencia": nome_saida,
+        "experiencia_base": config["nome"],
+        "divisao": divisao,
         "descricao": config["descricao"],
         "features": features,
         "ajustado_em": "treino",
@@ -290,22 +307,43 @@ def imprimir_resumo(
 ) -> None:
     """Mostra a experiência, os pontos por conjunto, as estatísticas e as caudas."""
     features = config["features"]
-    print(f"Experiência {config['nome']}: {len(features)} features ({', '.join(features)})")
+    print(f"Experiência {destino.name}: {len(features)} features ({', '.join(features)})")
     pontos = " | ".join(f"{nome}: {len(brutos[nome])} pontos" for nome in brutos)
     print(f"  {pontos}")
-    print("  mediana e IQR ajustados só ao treino:")
+    print("  mediana e IQR ajustados só ao treino desta divisão:")
     for f in features:
         p = normalizacao[f]
         print(f"    {f:16s} mediana {p['mediana']:14.4f} | IQR {p['iqr']:14.4f}")
     print("  percentis antes/depois da normalização (depois, em unidades de IQR):")
     print(tabela.to_string(index=False))
-    print(f"Artefactos em {destino.relative_to(RAIZ)}")
+    try:
+        referencia = destino.relative_to(RAIZ)
+    except ValueError:
+        referencia = destino
+    print(f"Artefactos em {referencia}")
+
+
+def principal() -> None:
+    """Ponto de entrada: prepara as features de uma configuração e de uma divisão."""
+    parser = argparse.ArgumentParser(
+        description="Passo 4: features normalizadas (mediana/IQR do treino) por conjunto."
+    )
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=str(CONFIG_POR_DEFEITO),
+        help="ficheiro de configs/ com a lista de features",
+    )
+    parser.add_argument(
+        "--divisao",
+        choices=tuple(CONJUNTOS_POR_DIVISAO),
+        default="principal",
+        help="divisão a preparar (por omissão, a de referência)",
+    )
+    argumentos = parser.parse_args()
+    preparar(argumentos.config, divisao=argumentos.divisao)
 
 
 if __name__ == "__main__":
-    argumentos = sys.argv[1:]
-    assert len(argumentos) <= 1, (
-        "uso: python src/features.py [configs/<nome_da_experiencia>.json]"
-    )
-    preparar(argumentos[0] if argumentos else CONFIG_POR_DEFEITO)
+    principal()
 

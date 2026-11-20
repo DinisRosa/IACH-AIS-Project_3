@@ -62,7 +62,16 @@ python src/preparar_parquet.py     # CSV -> Parquet
 python src/dividir.py              # treino/validação/teste (principal e agrupada por navio)
 python src/features.py             # features e normalização (uma variante de configs/)
 python src/features.py configs/EXP-002_features_sem_xy.json   # outra variante
+python src/features.py --divisao por_navio                    # divisão de sensibilidade
+python src/dataset.py              # valida o dataset nas duas divisões (passo 5)
+python src/dataset.py --exp EXP-002_features_sem_xy --divisao principal
+python src/modelos.py --threads 1  # custo de uma BiGRU de brinquedo em CPU (passo 5)
 ```
+
+As features da divisão por navio ficam em `data/features/<EXP>__por_navio/` e têm de ser
+geradas antes de `src/dataset.py` poder validar essa divisão. Nos benchmarks e no treino,
+limitar o torch a 1 thread (`python src/modelos.py --threads 1`): com mais threads os tempos
+pioram (D16).
 
 **[A COMPLETAR]** comandos de treino e avaliação quando os scripts existirem.
 

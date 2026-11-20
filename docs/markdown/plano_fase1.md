@@ -75,10 +75,24 @@ Distribuição do nº de pontos por trajetória (mín., mediana, máx.) e da dur
 
 ### Passo 5 — Dataset (`dataset.py`)
 
-- Cada item é uma trajetória completa: `X [L, F]` e `y [L]`.
-- `collate`: padding até ao máximo do batch, devolve máscara e comprimentos.
-- Loss ignora o padding. Batches pequenos, agrupados por comprimento (bucketing).
-- Sem truncar trajetórias.
+**Estado: concluído** (`src/dataset.py`, `configs/dataset.json`; medição de custo em `src/modelos.py`).
+
+- Cada item é uma trajetória completa, **sem truncar nem janelar**: `x [L, F]` (float32, já normalizado), `y [L]` (int64), o id `(id_navio, n_traj)` e os índices dos pontos no conjunto, para reconstruir as previsões ponto a ponto na avaliação.
+- `collate`: padding até ao máximo do batch, com máscara booleana, comprimentos e índices. O padding leva 0 nas features (0 é a mediana da normalização), `-1` no `y` e nos índices, para que um uso indevido falhe em vez de passar; a loss mascarada só olha para os pontos reais.
+- Bucketing por comprimento com semente fixa: ordem sorteada, ordenada por comprimento (empates pela ordem sorteada), cortada em blocos de `tamanho_batch` e ordem dos blocos sorteada outra vez. `configs/dataset.json`: EXP-001, divisão principal, `tamanho_batch = 2`, semente 42. Batches pequenos porque cada item tem milhares de pontos.
+- A divisão principal lê `data/features/<EXP>/`; a agrupada por navio lê `data/features/<EXP>__por_navio/`, com normalização própria ajustada ao treino **dessa** divisão (D15), para o teste de sensibilidade não usar estatísticas de pontos que nele estão no teste.
+- Testes no próprio script: formas e tipos de cada item; máscara a bater certo com os comprimentos (nenhum ponto real mascarado, nenhum padding com máscara); padding de `x`/`y`/índices com 0/−1/−1; cobertura exata das trajetórias e dos pontos pelos batches; bucketing reprodutível com a mesma semente e diferente com outra; ordem dos pontos preservada (comparação com o Parquet e `t_rel` estritamente crescente); ids iguais aos do conjunto certo e sem intrusos; e a loss mascarada de um batch com padding igual à média ponderada das losses das trajetórias isoladas (tolerância 10⁻⁶; na prática ≤ 1,4 × 10⁻⁷). As duas divisões passam os mesmos testes com a mesma interface.
+- Números: principal 86 / 19 / 18 trajetórias, 706 522 / 173 532 / 146 225 pontos, comprimentos 901–45 251 (mediana 5 540,5 no treino), 43 / 10 / 9 batches; por navio 80 / 21 / 22 trajetórias, 776 216 / 114 749 / 135 314 pontos, 40 / 11 / 11 batches. Soma 123 trajetórias e 1 026 279 pontos nas duas.
+- **Custo em CPU** (`python src/modelos.py`: BiGRU de brinquedo de 6 features → 64 unidades, 1 camada bidirecional, 50 497 parâmetros; forward+backward+passo de SGD com loss mascarada; 3 repetições; 1 thread):
+
+| Cenário | Pontos | Tempo (mediana) | Memória adicional | Pico do processo |
+| --- | --- | --- | --- | --- |
+| batch mediano (2 trajetórias) | 11 081 | 0,87 s | +340 MB | 900 MB |
+| trajetória mais longa | 45 251 | 8,57 s | +1 398 MB | 2 297 MB |
+| duas mais longas (com padding) | 76 023 | 8,66 s | +291 MB | 2 588 MB |
+
+  Com 10 threads os tempos pioram e ficam instáveis (14,55 s de mediana na mais longa, 10,0–19,6 s): a GRU é sequencial e o paralelismo acrescenta contenção. **Decisão (D16): 1 thread no torch.** Extrapolando linearmente em pontos, uma época de treino (706 522 pontos) fica em ≈ 2,2 min e 30 épocas em ≈ 1,1 h. A memória do pior caso (2,3–2,6 GB) cabe nos 14 GB da máquina, mas limita o batch das trajetórias muito longas a 2.
+  **Conclusão: a BiGRU é viável em CPU** e mantém-se como modelo principal do passo 6; a CNN dilatada continua a ser a alternativa, não passa a principal. Números brutos em `data/benchmarks/bigru_cpu.json` (1 thread) e `bigru_cpu_10threads.json`.
 
 ### Passo 6 — Baselines (`modelos.py`)
 
@@ -92,7 +106,7 @@ Distribuição do nº de pontos por trajetória (mín., mediana, máx.) e da dur
 
 O antigo B2 (baselines com médias/desvios móveis e ponto anterior) foi retirado: em contexto de trajetória completa, o modelo sequencial cobre esse papel e a fase 1 mede-se contra B0, B1, HMM e o principal.
 
-Risco: o PyTorch está em CPU. Se o passo 2 mostrar sequências muito longas, a CNN dilatada passa a modelo principal.
+Risco: o PyTorch está em CPU. Medido no passo 5: a BiGRU de brinquedo custa 8,57 s por forward+backward na trajetória mais longa e ≈ 2,2 min por época estimada, logo é viável (D16) e mantém-se principal; a CNN dilatada é a alternativa se o tempo real de treino não couber no orçamento.
 
 ### Passo 7 — Treino (`treinar.py`)
 
@@ -154,3 +168,5 @@ Janelamento, sobreposição, corte em gaps, pós-processamento temporal, ablaç�
 | D12 | Divisão agrupada por navio entra já na fase 1, só como teste de sensibilidade | 59 / 12 / 13 navios → 80 / 21 / 22 trajetórias; a divisão principal não muda |
 | D13 | `time_gap` é feature; `t_rel` fica de fora por defeito e só entra na ablação EXP-003 | variantes escolhidas em `configs/`, sem alterar código |
 | D14 | PDFs de terceiros em `docs/bibliografia/` ficam fora do Git | `.gitignore` e nota no `AGENTS.md`; versão local mantém-se |
+| D15 | A divisão por navio tem features e normalização próprias, em `data/features/<EXP>__por_navio/`, ajustadas ao treino dessa divisão | o teste de sensibilidade não usa estatísticas de pontos que nele estão no teste; a divisão principal não muda (verificado por md5, bit a bit) |
+| D16 | BiGRU em CPU com 1 thread no torch e `tamanho_batch = 2` | medido no passo 5: 8,57 s por passo na trajetória mais longa (vs 14,55 s com 10 threads), pico de 2,3 GB, época ≈ 2,2 min; a CNN dilatada fica como alternativa |

@@ -1,6 +1,10 @@
 # Dependências da fase 1. Versões fixadas às que estão instaladas em IACH-AIS-venv-3
-# (Python 3.14.4). O resto — scikit-learn, torch, hmmlearn — entra quando os passos
-# correspondentes do plano forem implementados.
+# (Python 3.14.4). scikit-learn e hmmlearn entram quando os passos correspondentes do
+# plano forem implementados.
 numpy==2.5.5
 pandas==3.1.1
 pyarrow==26.0.1
+# PyTorch em CPU: instalar a partir do índice oficial de CPU, porque o pacote do PyPI
+# traz CUDA e não há GPU nesta máquina.
+#   pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0

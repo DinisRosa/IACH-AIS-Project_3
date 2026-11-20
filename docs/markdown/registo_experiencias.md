@@ -8,6 +8,11 @@ Semente 42 em todas. A divisão de referência é a por id completo
 (`data/dividir/conjuntos.json`); a divisão agrupada por navio
 (`data/dividir/conjuntos_por_navio.json`) serve só para o teste de sensibilidade.
 
+Cada experiência existe nas duas divisões: `data/features/<EXP>/` (principal) e
+`data/features/<EXP>__por_navio/` (por navio), esta última com normalização ajustada ao treino
+**dessa** divisão (D15). Os números abaixo são da divisão principal; na por navio o treino tem
+776 216 pontos e a mediana/IQR de `x` é 548 546,7 / 182 032,1 (vs 544 820,7 / 200 743,3).
+
 ## EXP-001 — features com `x, y` (referência)
 
 - **Objetivo:** variante de referência do passo 4, com as coordenadas projetadas, para comparação

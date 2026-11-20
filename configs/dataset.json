@@ -1,0 +1,8 @@
+{
+  "nome": "dataset_fase1",
+  "descricao": "Parâmetros do dataset e do carregamento: batches pequenos porque cada item é uma trajetória completa (até 45 251 pontos) e o bucketing agrupa comprimentos parecidos para limitar o padding.",
+  "experiencia": "EXP-001_features_com_xy",
+  "divisao": "principal",
+  "tamanho_batch": 2,
+  "semente": 42
+}
