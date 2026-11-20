@@ -1,0 +1,6 @@
+# Dependências da fase 1. Versões fixadas às que estão instaladas em IACH-AIS-venv-3
+# (Python 3.14.4). O resto — scikit-learn, torch, hmmlearn — entra quando os passos
+# correspondentes do plano forem implementados.
+numpy==2.5.5
+pandas==3.1.1
+pyarrow==26.0.1
