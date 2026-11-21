@@ -1,0 +1,18 @@
+{
+  "nome": "baselines",
+  "descricao": "B0 (sempre pesca) e B1 (LogReg, HistGradientBoosting) do passo 6; ajuste só no treino e escolha do hiperparâmetro na validação (F1 macro, desempate por PR-AUC).",
+  "divisao": "principal",
+  "semente": 42,
+  "limiar": 0.5,
+  "experiencias": ["EXP-001_features_com_xy", "EXP-002_features_sem_xy"],
+  "logreg": {
+    "C": [0.01, 0.1, 1.0, 10.0],
+    "max_iter": 1000
+  },
+  "hist_gradient_boosting": {
+    "learning_rate": [0.1, 0.05],
+    "max_leaf_nodes": [31, 63],
+    "max_iter": 200,
+    "early_stopping": false
+  }
+}

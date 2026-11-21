@@ -1,0 +1,13 @@
+{
+  "nome": "hmm",
+  "descricao": "HMM de 2 estados (Peel e Good, 2011) sobre euc_speed e signed_turn, ajustado por EM só ao treino e escolhido na validação; decisão por Viterbi.",
+  "divisao": "principal",
+  "semente": 42,
+  "limiar": 0.5,
+  "experiencias": ["EXP-001_features_com_xy", "EXP-002_features_sem_xy"],
+  "features": ["euc_speed", "signed_turn"],
+  "n_repeticoes_em": 40,
+  "tolerancia": 0.0001,
+  "var_minima": 0.000001,
+  "n_replicas": 3
+}
