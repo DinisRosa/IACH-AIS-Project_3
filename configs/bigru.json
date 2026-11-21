@@ -1,0 +1,18 @@
+{
+  "nome": "bigru",
+  "descricao": "BiGRU por trajetória completa (passo 6): projeção + GRU bidirecional com packing, BCE mascarada, Adam, early stopping pelo F1 macro da validação. Sem pesos de classe nem reamostragem. Batch de 1 no treino e na avaliação: sem padding o packing é dispensável e em CPU custa cerca de 6x mais (ver D17).",
+  "divisao": "principal",
+  "experiencias": ["EXP-001_features_com_xy", "EXP-002_features_sem_xy"],
+  "hidden": 32,
+  "camadas": 1,
+  "dropout": 0.0,
+  "learning_rate": 0.002,
+  "tamanho_batch": 1,
+  "epocas": 8,
+  "paciencia": 3,
+  "grad_clip": 1.0,
+  "limiar": 0.5,
+  "semente": 42,
+  "sementes": [42, 43, 44],
+  "threads": 1
+}

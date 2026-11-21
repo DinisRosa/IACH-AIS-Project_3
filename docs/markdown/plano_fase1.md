@@ -106,13 +106,22 @@ Distribuição do nº de pontos por trajetória (mín., mediana, máx.) e da dur
 
 O antigo B2 (baselines com médias/desvios móveis e ponto anterior) foi retirado: em contexto de trajetória completa, o modelo sequencial cobre esse papel e a fase 1 mede-se contra B0, B1, HMM e o principal.
 
+Estado: **concluído**. Implementado em `src/baselines.py` (B0 e B1, config `configs/baselines.json`) e `src/hmm.py` (HMM em log-espaço, EM próprio, init por quantis, decisão por Viterbi; config `configs/hmm.json`). Métricas de validação das duas experiências no `registo_experiencias.md`: B1 é o melhor baseline (F1 macro 0,877 na EXP-001 e 0,893 na EXP-002) e o HMM fica em 0,708 por ser conservador na sensibilidade (0,663).
+
 Risco: o PyTorch está em CPU. Medido no passo 5: a BiGRU de brinquedo custa 8,57 s por forward+backward na trajetória mais longa e ≈ 2,2 min por época estimada, logo é viável (D16) e mantém-se principal; a CNN dilatada é a alternativa se o tempo real de treino não couber no orçamento.
 
 ### Passo 7 — Treino (`treinar.py`)
 
+**Estado: concluído** com a ressalva do orçamento de épocas (ver abaixo). `src/modelos.py` (classe `BiGRU` com packing), `src/treinar.py` e `configs/bigru.json`; seis corridas (2 experiências × 3 sementes) na validação, resultados no `registo_experiencias.md`. O teste continua intocado.
+
 - BCE mascarada, sem pesos de classe.
-- Early stopping pelo F1 na validação.
-- 3 a 5 sementes por modelo.
+- Early stopping pelo F1 macro na validação; o estado final é o da melhor época, não o da última.
+- 3 a 5 sementes por modelo: **decidido 3 sementes (42, 43, 44) por experiência**, 8 épocas no máximo e paciência 3 (D18), porque a época custa ~3 min em CPU.
+- Custo medido: ~173 s por época na EXP-001 (1 thread, hidden 32, batch 1); a avaliação da validação por época passou a batch 1 para não pagar o packing (D17).
+- **Custo real de ponta a ponta (semente 42):** 203,0 s/época na EXP-001 (27,7 min) e 201,3 s/época na EXP-002 (27,4 min), com 8 épocas corridas nas duas e a melhor época na 8.ª.
+- **As 3 sementes confirmaram o problema:** 8/8 épocas em todas as seis corridas (195 a 221 s/época, 26,8 a 30,1 min por semente) e a melhor época foi a 6.ª, 7.ª ou 8.ª; a paciência 3 **nunca disparou**. O orçamento de 8 épocas é o que limita o treino, não o *early stopping*. **Decisão em aberto (Dinis):** subir o máximo de épocas obriga a repetir as seis corridas (~3 h em CPU a 1 thread), por isso não se mexeu. Resultado já obtido: F1 macro na validação **0,940 ± 0,011** (EXP-001) e **0,933 ± 0,005** (EXP-002), contra 0,877 / 0,893 do melhor B1 e 0,708 do HMM; detalhe no `registo_experiencias.md`.
+- `--sanidade` (overfit de 5 trajetórias, espera-se F1 ≈ 1) e `--determinismo` (duas corridas iguais bit a bit) são testes do próprio script.
+- **Verificações feitas (EXP-001, 1 thread):** `--sanidade` dá loss 0,623 → 0,017 e F1 macro 0,998 na própria amostra (5 trajetórias, 5 706 pontos, 124 s), logo o modelo memoriza quando deve; `--determinismo` dá losses idênticas (0,630039 / 0,595168 duas vezes) e diferença máxima nas probabilidades 0,0, logo o treino é reprodutível. `python src/hmm.py --testes` também passa (log-soma-exp, Viterbi e EM sintético).
 
 ### Passo 8 — Avaliação (`avaliar.py`)
 
@@ -132,7 +141,7 @@ Risco: o PyTorch está em CPU. Medido no passo 5: a BiGRU de brinquedo custa 8,5
 ```
 src/
   preparar_parquet.py   dividir.py   features.py
-  dataset.py   modelos.py   treinar.py   avaliar.py
+  dataset.py   modelos.py   baselines.py   hmm.py   treinar.py   avaliar.py
 configs/     (um ficheiro por experiência)
 data/        (ignorado pelo Git)
 docs/        (este plano e notas)
@@ -170,3 +179,5 @@ Janelamento, sobreposição, corte em gaps, pós-processamento temporal, ablaç�
 | D14 | PDFs de terceiros em `docs/bibliografia/` ficam fora do Git | `.gitignore` e nota no `AGENTS.md`; versão local mantém-se |
 | D15 | A divisão por navio tem features e normalização próprias, em `data/features/<EXP>__por_navio/`, ajustadas ao treino dessa divisão | o teste de sensibilidade não usa estatísticas de pontos que nele estão no teste; a divisão principal não muda (verificado por md5, bit a bit) |
 | D16 | BiGRU em CPU com 1 thread no torch e `tamanho_batch = 2` | medido no passo 5: 8,57 s por passo na trajetória mais longa (vs 14,55 s com 10 threads), pico de 2,3 GB, época ≈ 2,2 min; a CNN dilatada fica como alternativa |
+| D17 | `pack_padded_sequence` só quando o batch tem mesmo padding; treino e avaliação com `tamanho_batch = 1` | medido: com packing 7,39 s por batch de 9 000 pontos (0,82 s/1000), sem padding 1,30 s (0,14 s/1000), ou seja ~6× mais caro em CPU; o modo determinístico não custa nada (1,30 vs 1,33). Sem janelas, batch de 1 não introduz padding e garante que a previsão não depende do batch. Época medida em EXP-001: 173 s |
+| D18 | BiGRU com `epocas = 8`, `paciencia = 3` e **3 sementes** (42, 43, 44) por experiência | a época real custa ~3 min (706 522 pontos de treino + 173 532 de validação, 1 thread); 15 épocas × 5 sementes × 2 experiências não cabia no orçamento de tempo. O F1 macro da validação já é 0,867 na 1.ª época, logo 8 épocas chegam para a curva estabilizar. Três sementes ficam no intervalo "3 a 5" do plano e permitem média ± desvio |

@@ -37,7 +37,9 @@ src/
   dividir.py            divisão por id completo
   features.py           normalização (só treino) e seleção de features
   dataset.py            Dataset/collate: trajetória completa, máscara, bucketing
-  modelos.py            baselines e modelos sequenciais
+  modelos.py            BiGRU (modelo principal) e BiGRU de brinquedo para medir custo
+  baselines.py          B0 (sempre pesca) e B1 (LogReg, HistGradientBoosting)
+  hmm.py                HMM de dois estados, EM/Viterbi em log-espaço
   treinar.py            treino (loss mascarada, early stopping)
   avaliar.py            métricas por ponto e por segmento
 configs/                um ficheiro por experiência
@@ -66,6 +68,14 @@ python src/features.py --divisao por_navio                    # divisão de sens
 python src/dataset.py              # valida o dataset nas duas divisões (passo 5)
 python src/dataset.py --exp EXP-002_features_sem_xy --divisao principal
 python src/modelos.py --threads 1  # custo de uma BiGRU de brinquedo em CPU (passo 5)
+python src/avaliar.py --testes     # testes internos das métricas e das previsões
+python src/baselines.py            # B0 e B1 nas duas experiências do config
+python src/baselines.py --exp EXP-001_features_com_xy --modelos B1_logreg
+python src/hmm.py                  # HMM nas duas experiências do config
+python src/hmm.py --testes         # log-soma-exp, Viterbi e EM sintético
+python src/treinar.py --exp EXP-001_features_com_xy --semente 42 --threads 1
+python src/treinar.py --sanidade   # overfit de 5 trajetórias curtas (~2 min)
+python src/treinar.py --determinismo   # duas corridas iguais bit a bit
 ```
 
 As features da divisão por navio ficam em `data/features/<EXP>__por_navio/` e têm de ser
@@ -73,7 +83,10 @@ geradas antes de `src/dataset.py` poder validar essa divisão. Nos benchmarks e 
 limitar o torch a 1 thread (`python src/modelos.py --threads 1`): com mais threads os tempos
 pioram (D16).
 
-**[A COMPLETAR]** comandos de treino e avaliação quando os scripts existirem.
+Custo real da BiGRU em CPU: 3 a 4 min por época (195–221 s; 706 522 pontos de treino + 173 532 de
+validação, 1 thread, `hidden = 32`, batch 1) e 27 a 30 min por semente (8 épocas no máximo,
+paciência 3, D18). Treinos longos correm bem dentro de `screen`/`tmux`, para não morrerem com o
+terminal; dois em paralelo não se atrapalham.
 
 ## 6. Convenções de código
 

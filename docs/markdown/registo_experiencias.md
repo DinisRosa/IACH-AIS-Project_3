@@ -4,7 +4,8 @@ Uma entrada por experiência (`EXP-00N`), com objetivo, configuração, métrica
 métricas por ponto e por segmento entram aqui quando os modelos forem treinados (passos 6 a 8 do
 plano de fase 1); até lá fica registado o que já se pode medir.
 
-Semente 42 em todas. A divisão de referência é a por id completo
+Semente 42 nos baselines e no HMM; a BiGRU corre com três sementes (42, 43 e 44, D18) e reporta
+média ± desvio. A divisão de referência é a por id completo
 (`data/dividir/conjuntos.json`); a divisão agrupada por navio
 (`data/dividir/conjuntos_por_navio.json`) serve só para o teste de sensibilidade.
 
@@ -77,3 +78,51 @@ Leituras:
   (`razao_fragmentacao` 62× e 88×), o que baixa o IoU por segmento apesar do bom desempenho por
   ponto. É a motivação natural para o pós-processamento temporal da fase 2; na fase 1 reporta-se
   tal e qual.
+
+## BiGRU — validação (passo 7)
+
+Config `configs/bigru.json`: projeção linear + GRU bidirecional (hidden 32, 1 camada, dropout 0),
+Adam com lr 0,002, BCE mascarada, `grad_clip` 1,0, batch 1, até 8 épocas com paciência 3, limiar
+0,5, 1 thread. Sem pesos de classe, sem reamostragem e sem pós-processamento. O estado final é o da
+melhor época na validação (D18). Números de `data/resultados/<EXP>/bigru_semente<k>_treino.json` e
+`BiGRU_semente<k>_validacao.json`.
+
+| Exp | Semente | Precisão pesca | Sensib. pesca | F1 pesca | F1 navegação | F1 macro | PR-AUC | IoU pesca | IoU navegação |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| EXP-001 | 42 | 0,983 | 0,973 | 0,978 | 0,927 | 0,952 | 0,996 | 0,956 | 0,863 |
+| EXP-001 | 43 | 0,983 | 0,952 | 0,967 | 0,897 | 0,932 | 0,995 | 0,936 | 0,812 |
+| EXP-001 | 44 | 0,978 | 0,962 | 0,970 | 0,902 | 0,936 | 0,995 | 0,941 | 0,821 |
+| EXP-001 | **média ± desvio** | 0,981 ± 0,003 | 0,962 ± 0,011 | 0,972 ± 0,006 | 0,908 ± 0,016 | **0,940 ± 0,011** | 0,995 ± 0,000 | 0,945 ± 0,011 | 0,832 ± 0,027 |
+| EXP-002 | 42 | 0,983 | 0,956 | 0,969 | 0,903 | 0,936 | 0,994 | 0,941 | 0,823 |
+| EXP-002 | 43 | 0,986 | 0,953 | 0,969 | 0,903 | 0,936 | 0,994 | 0,940 | 0,823 |
+| EXP-002 | 44 | 0,979 | 0,952 | 0,965 | 0,890 | 0,927 | 0,994 | 0,933 | 0,801 |
+| EXP-002 | **média ± desvio** | 0,983 ± 0,004 | 0,954 ± 0,002 | 0,968 ± 0,002 | 0,898 ± 0,008 | **0,933 ± 0,005** | 0,994 ± 0,000 | 0,938 ± 0,004 | 0,816 ± 0,013 |
+
+Custo e épocas: 8/8 épocas em todas as seis corridas, 195 a 221 s por época (1 thread) e 26,8 a
+30,1 min por semente; a melhor época foi a 6.ª, 7.ª ou 8.ª, sempre perto do fim, e o *early stopping*
+com paciência 3 **nunca disparou**. Ou seja, quem limita é o orçamento de 8 épocas, não a paciência.
+
+Leituras:
+
+- **Supera os baselines na validação, com folga e com pouco desvio:** F1 macro 0,940 ± 0,011
+  (EXP-001) e 0,933 ± 0,005 (EXP-002), contra 0,877 / 0,893 do melhor B1 e 0,708 do HMM. Ganha
+  sobretudo na classe minoritária: o F1 da navegação passa de 0,774–0,840 (B1) para 0,908 ± 0,016,
+  mantendo a precisão da pesca em ~0,98.
+- **O contexto sequencial substitui a posição geográfica:** com `x, y` (EXP-001) o F1 macro é
+  0,007 melhor do que sem eles, valor dentro de um desvio-padrão de 0,011. Não há sinal de que a
+  posição seja o que sustenta o resultado — o mesmo que o B1 já sugeria, agora com mais margem.
+- **Fragmentação muito menor do que no B1:** 128, 239 e 288 segmentos previstos para 56 reais
+  (razão 2,3×, 4,3× e 5,1×) na EXP-001, contra 3 486 e 4 934 (62× e 88×) do B1; IoU por segmento
+  0,879–0,922. É o efeito esperado de ver a trajetória inteira em vez de um ponto de cada vez.
+- **As fronteiras são encontradas mas não são exatas:** 37/37 fronteiras reais emparelhadas nas seis
+  corridas, mas apenas 24 % a 35 % dentro da tolerância, com a fronteira prevista em média a 46–78
+  pontos da real. A BiGRU acerta *que* há uma troca; *onde* ela começa continua a ser o alvo natural
+  do pós-processamento da fase 2 (fora do âmbito desta fase).
+- **Há trajetórias difíceis:** por trajetória, o F1 macro fica em 0,945–0,957 em média, mas o mínimo
+  desce a 0,685–0,823, ou seja, o agregado de 0,93–0,95 esconde casos individuais fracos. Fica
+  registado para a análise de erros típicos.
+- **A decisão em aberto é o orçamento de épocas:** como o *early stopping* não dispara e a melhor
+  época é sempre uma das três últimas, é provável que 8 épocas cortem o treino a meio. Subir o
+  máximo de épocas obriga a repetir as seis corridas (~3 h em CPU) e por isso ficou como decisão do
+  Dinis, não como ajuste silencioso.
+

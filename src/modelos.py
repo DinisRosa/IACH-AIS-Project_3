@@ -1,18 +1,21 @@
-"""Passo 5 da fase 1: modelo de brinquedo (BiGRU) e medição do custo de um passo em CPU.
+"""Modelos sequenciais da fase 1: a BiGRU que se treina e a de brinquedo que mede o custo em CPU.
 
-Antes de escolher a arquitetura (BiGRU ou CNN dilatada), mede-se o que custa um forward+backward
-de uma BiGRU pequena sobre a trajetória mais longa do treino (45 251 pontos), em CPU, com e sem
-padding. O resultado decide se a BiGRU é viável ou se a CNN dilatada passa a principal; os números
-ficam em ``data/benchmarks/bigru_cpu.json`` e no plano.
+``BiGRU`` é o modelo principal do passo 6: projeção linear, GRU bidirecional **com packing** e um
+logit por ponto. O packing garante que o padding de um batch não entra em nenhuma das direções,
+logo a previsão de uma trajetória é a mesma quer vá sozinha quer acompanhada. Quando não há
+padding (``B = 1`` ou todos os comprimentos iguais) o ``forward`` salta o empacotamento, porque em
+CPU ele custa ~6× mais do que correr a GRU diretamente (D17).
 
-O modelo é de brinquedo: uma projeção linear, uma GRU bidirecional e uma camada de saída por ponto.
-Serve para medir custo e para fixar a forma da loss mascarada, não para ser treinado a sério (isso é
-o passo 6, ``treinar.py``).
+``BigruBrinquedo`` e o ``main`` continuam a ser a medição do passo 5: uma arquitetura equivalente
+sem packing, para medir o custo do pior caso (com padding) na trajetória mais longa do treino
+(45 251 pontos) e decidir se a BiGRU era viável em CPU. Números em
+``data/benchmarks/bigru_cpu.json`` (1 thread) e no plano.
 
 Executar a partir da raiz do repositório:
 
     python src/modelos.py --threads 1 --saida bigru_cpu.json   # medição de referência (1 thread)
     python src/modelos.py --repeticoes 1 --hidden 32           # medição rápida
+    python src/modelos.py --testes --threads 1                 # packing e loss mascarada
 """
 
 from __future__ import annotations
@@ -40,6 +43,142 @@ def loss_mascarada(logits: torch.Tensor, y: torch.Tensor, mascara: torch.Tensor)
     return nn.functional.binary_cross_entropy_with_logits(
         logits[mascara], alvo.to(logits.dtype)
     )
+
+
+class BiGRU(nn.Module):
+    """Projeção linear + GRU bidirecional **com packing** + saída por ponto.
+
+    Usa ``pack_padded_sequence``/``pad_packed_sequence``: o padding dos batches não entra em
+    nenhuma das duas direções, por isso a previsão de uma trajetória não depende das outras
+    trajetórias do batch. É o modelo do ``treinar.py``; a ``BigruBrinquedo`` abaixo fica como
+    referência de custo do pior caso (com padding), medida no passo 5.
+    """
+
+    def __init__(
+        self, n_features: int, hidden: int = 64, camadas: int = 1, dropout: float = 0.0
+    ):
+        super().__init__()
+        assert hidden >= 1 and camadas >= 1, "hidden e camadas têm de ser >= 1"
+        assert 0.0 <= dropout < 1.0, "dropout tem de estar em [0, 1)"
+        self.projecao = nn.Linear(n_features, hidden)
+        self.gru = nn.GRU(
+            hidden,
+            hidden,
+            num_layers=camadas,
+            batch_first=True,
+            bidirectional=True,
+            dropout=dropout if camadas > 1 else 0.0,
+        )
+        self.saida = nn.Linear(2 * hidden, 1)
+
+    def forward(self, x: torch.Tensor, comprimentos: torch.Tensor | None = None) -> torch.Tensor:
+        """Recebe ``[B, L, F]`` (e os comprimentos reais) e devolve um logit por ponto, ``[B, L]``.
+
+        Quando o batch não tem padding (``B = 1`` ou todas as sequências com o comprimento máximo),
+        salta o empacotamento: em CPU o ``pack_padded_sequence`` custa cerca de 6× mais do que correr
+        a GRU diretamente, e sem padding os dois caminhos dão exatamente o mesmo resultado.
+        """
+        ativacoes = torch.relu(self.projecao(x))
+        if comprimentos is None:
+            saida, _ = self.gru(ativacoes)
+        else:
+            assert comprimentos.shape == (x.shape[0],), "comprimentos com forma errada"
+            assert int(comprimentos.max()) <= x.shape[1], "comprimento maior do que o batch"
+            assert bool((comprimentos > 0).all()), "trajetória com comprimento zero"
+            if bool((comprimentos == x.shape[1]).all()):
+                saida, _ = self.gru(ativacoes)
+            else:
+                empacotado = nn.utils.rnn.pack_padded_sequence(
+                    ativacoes,
+                    comprimentos.detach().to("cpu"),
+                    batch_first=True,
+                    enforce_sorted=False,
+                )
+                saida, _ = self.gru(empacotado)
+                saida, _ = nn.utils.rnn.pad_packed_sequence(
+                    saida, batch_first=True, total_length=x.shape[1]
+                )
+        return self.saida(saida).squeeze(-1)
+
+
+@torch.no_grad()
+def prever_logits(
+    modelo: nn.Module, x: torch.Tensor, comprimentos: torch.Tensor | None = None
+) -> np.ndarray:
+    """Logits por ponto em modo de avaliação, sem tocar no estado de treino do modelo."""
+    estava_a_treinar = modelo.training
+    modelo.eval()
+    try:
+        logits = modelo(x, comprimentos)
+    finally:
+        modelo.train(estava_a_treinar)
+    return logits.detach().cpu().numpy()
+
+
+def probabilidades(
+    modelo: nn.Module, dataset, tamanho_batch: int = 4
+) -> list[np.ndarray]:
+    """Probabilidade de pesca por trajetória, com batches agrupados por comprimento."""
+    from dataset import iterar_batches
+
+    probabilidades_por_trajetoria: dict[tuple[int, int], np.ndarray] = {}
+    for batch in iterar_batches(dataset, tamanho_batch, semente=0):
+        logits = prever_logits(modelo, batch["x"], batch["comprimentos"])
+        for linha, identificador in enumerate(batch["ids"]):
+            comprimento = int(batch["comprimentos"][linha])
+            prob = 1.0 / (1.0 + np.exp(-logits[linha, :comprimento].astype(np.float64)))
+            probabilidades_por_trajetoria[identificador] = prob
+    saida = [probabilidades_por_trajetoria[i] for i in dataset.ids]
+    assert len(saida) == len(dataset), "trajetórias perdidas na previsão"
+    return saida
+
+
+def verificar_padding(
+    modelo: nn.Module, dataset, tolerancia: float = 1e-5
+) -> dict:
+    """A previsão de uma trajetória não pode mudar por estar num batch com padding.
+
+    Compara a trajetória mais curta e a mais longa do conjunto: sozinhas e no mesmo batch (com
+    padding na curta). O teste cobre as duas direções da GRU, porque a diferença na direção inversa
+    é precisamente a que o padding introduz.
+    """
+    assert len(dataset) >= 2, "preciso de pelo menos duas trajetórias"
+    ordem = np.argsort(dataset.comprimentos, kind="stable")
+    indice_curta = int(ordem[0])
+    indice_longa = int(ordem[-1])
+    assert dataset.comprimentos[indice_curta] < dataset.comprimentos[indice_longa], (
+        "as duas trajetórias têm o mesmo comprimento; o teste não mede padding"
+    )
+    sozinha_curta = prever_logits(
+        modelo, dataset[indice_curta]["x"][None], torch.tensor([dataset[indice_curta]["comprimento"]])
+    )[0]
+    sozinha_longa = prever_logits(
+        modelo, dataset[indice_longa]["x"][None], torch.tensor([dataset[indice_longa]["comprimento"]])
+    )[0]
+    batch = collate_trajetorias([dataset[indice_curta], dataset[indice_longa]])
+    assert int(batch["x"].shape[1]) == dataset.comprimentos[indice_longa], "sem padding no batch"
+    juntas = prever_logits(modelo, batch["x"], batch["comprimentos"])
+    comprimento_curta = dataset.comprimentos[indice_curta]
+    comprimento_longa = dataset.comprimentos[indice_longa]
+    diferenca_curta = float(
+        np.max(np.abs(juntas[0, :comprimento_curta] - sozinha_curta))
+    )
+    diferenca_longa = float(
+        np.max(np.abs(juntas[1, :comprimento_longa] - sozinha_longa))
+    )
+    assert diferenca_curta <= tolerancia, (
+        f"trajetória curta muda dentro do batch: diferença máxima {diferenca_curta:.3e}"
+    )
+    assert diferenca_longa <= tolerancia, (
+        f"trajetória longa muda dentro do batch: diferença máxima {diferenca_longa:.3e}"
+    )
+    return {
+        "diferenca_max_curta": diferenca_curta,
+        "diferenca_max_longa": diferenca_longa,
+        "comprimento_curta": int(comprimento_curta),
+        "comprimento_longa": int(comprimento_longa),
+        "tolerancia": tolerancia,
+    }
 
 
 class BigruBrinquedo(nn.Module):
@@ -142,11 +281,32 @@ def principal() -> None:
         default="bigru_cpu.json",
         help="nome do ficheiro em data/benchmarks/ onde ficam os números",
     )
+    parser.add_argument(
+        "--testes",
+        action="store_true",
+        help="só verificar que o padding não muda as previsões (packing) e sair",
+    )
     argumentos = parser.parse_args()
 
     if argumentos.threads is not None:
         assert argumentos.threads >= 1, "threads tem de ser >= 1"
         torch.set_num_threads(argumentos.threads)
+
+    if argumentos.testes:
+        config = ler_config(Path(argumentos.config))
+        experiencia = argumentos.exp or config["experiencia"]
+        treino = carregar_dataset(experiencia, "treino", "principal")
+        torch.manual_seed(int(config["semente"]))
+        modelo = BiGRU(treino.n_features, argumentos.hidden, argumentos.camadas)
+        resultado = verificar_padding(modelo, treino)
+        print(
+            f"Packing ok (1 thread: {torch.get_num_threads()}): trajetória de "
+            f"{resultado['comprimento_curta']} pontos dentro de um batch de "
+            f"{resultado['comprimento_longa']} pontos difere no máximo "
+            f"{resultado['diferenca_max_curta']:.3e} (limite {resultado['tolerancia']:.0e}); "
+            f"a longa difere {resultado['diferenca_max_longa']:.3e}"
+        )
+        return
 
     config = ler_config(Path(argumentos.config))
     experiencia = argumentos.exp or config["experiencia"]
