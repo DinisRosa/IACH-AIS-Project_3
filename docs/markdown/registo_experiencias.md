@@ -126,3 +126,17 @@ Leituras:
   máximo de épocas obriga a repetir as seis corridas (~3 h em CPU) e por isso ficou como decisão do
   Dinis, não como ajuste silencioso.
 
+## BiGRU — orçamento de épocas (passo 7b)
+
+Mesma configuração da secção anterior com duas alterações: máximo de **30 épocas** e **paciência 5**
+(o resto igual: hidden 32, 1 camada, dropout 0, lr 0,002, BCE mascarada, `grad_clip` 1,0, batch 1,
+limiar 0,5, 1 thread, sementes 42/43/44, divisão principal). Objetivo: fechar a decisão em aberto do
+passo 7 — perceber se o F1 macro estabiliza antes das 30 épocas e se o *early stopping* chega a
+disparar. Continua a ser validação apenas: o teste não é usado e não se escolhe variante de
+referência.
+
+Artefactos por corrida: `data/resultados/<EXP>/bigru_semente<k>_treino.json` (histórico completo),
+`bigru_semente<k>_curvas.csv` (loss no treino e F1 macro na validação, época a época) e
+`BiGRU_semente<k>_validacao.json`. As corridas de 8 épocas ficaram arquivadas em
+`data/arquivo/epocas8/` e são o termo de comparação.
+

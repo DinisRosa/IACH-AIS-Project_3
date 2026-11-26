@@ -16,6 +16,7 @@ Comandos:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import random
 import time
@@ -159,6 +160,32 @@ def contar_parametros(modelo: torch.nn.Module) -> int:
     return int(sum(p.numel() for p in modelo.parameters() if p.requires_grad))
 
 
+def guardar_curvas(historico: list[dict], caminho: Path) -> Path:
+    """Escreve a curva época a época em CSV: loss no treino e F1 macro na validação.
+
+    Serve para ver, sem abrir os JSON de treino, se o F1 macro estabilizou e em que época o
+    early stopping disparou. Uma linha por época, com o tempo da época como coluna.
+    """
+    assert historico, "histórico vazio: não há curva para guardar"
+    campos = ("epoca", "loss", "f1_macro_validacao", "tempo_s", "norma_gradiente_max")
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    with caminho.open("w", encoding="utf-8", newline="") as ficheiro:
+        escritor = csv.writer(ficheiro)
+        escritor.writerow(campos)
+        for registo in historico:
+            norma = registo.get("norma_gradiente_max")
+            escritor.writerow(
+                (
+                    registo["epoca"],
+                    f"{registo['loss']:.6f}",
+                    f"{registo['f1_macro_validacao']:.6f}",
+                    f"{registo['tempo_s']:.3f}",
+                    "" if norma is None else f"{norma:.6f}",
+                )
+            )
+    return caminho
+
+
 def treinar(
     experiencia: str,
     config: dict,
@@ -261,6 +288,9 @@ def treinar(
         },
         checkpoint,
     )
+    curvas = guardar_curvas(
+        historico, PASTA_RESULTADOS / experiencia / f"bigru_semente{semente}_curvas.csv"
+    )
     registo = {
         "modelo": "BiGRU",
         "experiencia": experiencia,
@@ -283,6 +313,7 @@ def treinar(
             "checkpoint": str(checkpoint.relative_to(RAIZ)),
             "previsoes": str(parquet.relative_to(RAIZ)),
             "avaliacao": str(json_avaliacao.relative_to(RAIZ)),
+            "curvas": str(curvas.relative_to(RAIZ)),
         },
     }
     caminho_registo = PASTA_RESULTADOS / experiencia / f"bigru_semente{semente}_treino.json"
@@ -299,6 +330,7 @@ def treinar(
             f"(F1 macro {melhor_f1:.4f}); registo em {registo['caminho_registo']}",
             flush=True,
         )
+        print(f"  curvas por época em {registo['ficheiros']['curvas']}", flush=True)
 
 
 def amostra_treino(
@@ -410,7 +442,7 @@ def determinismo(
 def principal() -> None:
     """Ponto de entrada: testes rápidos (``--sanidade``, ``--determinismo``) ou treino a sério."""
     parser = argparse.ArgumentParser(
-        description="Passo 6: treino da BiGRU por trajetória completa, com loss mascarada."
+        description="Passos 7 e 7b: treino da BiGRU por trajetória completa, com loss mascarada."
     )
     parser.add_argument("--config", default=str(CONFIG_POR_DEFEITO))
     parser.add_argument("--exp", default=None, help="experiência de features (EXP-00x)")
